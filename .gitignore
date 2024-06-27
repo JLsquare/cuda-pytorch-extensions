@@ -1,0 +1,6 @@
+.vscode/
+build/
+__pycache__/
+DATA_CIFAR/
+DATA_MNIST/
+venv/
