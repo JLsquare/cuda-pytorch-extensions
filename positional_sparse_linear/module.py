@@ -195,3 +195,81 @@ class PositionalSparseLinear2d(torch.nn.Module):
         
         output = PositionalSparseLinear2dFunction.apply(input, self.connections, self.weights)
         return output.view(input.size(0), self.out_height, self.out_width)
+    
+class PositionalSparseLinear3dFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor):
+        input_flat = input.view(input.size(0), -1)
+        output = positional_sparse_linear.positional_sparse_linear_forward(input_flat, connections, weights)
+        ctx.save_for_backward(input, connections, weights)
+        return output.view(input.size(0), -1)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        input, connections, weights = ctx.saved_tensors
+        input_flat = input.view(input.size(0), -1)
+        grad_output_flat = grad_output.view(grad_output.size(0), -1)
+        grad_input_flat, grad_weight = positional_sparse_linear.positional_sparse_linear_backward(
+            grad_output_flat, input_flat, weights, connections)
+        grad_input = grad_input_flat.view_as(input)
+        return grad_input, None, grad_weight
+
+class PositionalSparseLinear3d(torch.nn.Module):
+    def __init__(self, in_depth: int, in_height: int, in_width: int, 
+                 out_depth: int, out_height: int, out_width: int, 
+                 weight_per_out: int = 5, position_influence: float = 0.1, 
+                 no_position_influence: bool = False):
+        super(PositionalSparseLinear3d, self).__init__()
+        self.in_depth = in_depth
+        self.in_height = in_height
+        self.in_width = in_width
+        self.out_depth = out_depth
+        self.out_height = out_height
+        self.out_width = out_width
+        self.weight_per_out = weight_per_out
+
+        assert torch.cuda.is_available(), "PositionalSparseLinear3d is only available on CUDA"
+
+        if no_position_influence:
+            connections_3d = torch.randint(in_depth * in_height * in_width, 
+                                           (out_depth * out_height * out_width, weight_per_out), 
+                                           device='cuda')
+            self.connections = connections_3d.to(torch.int32)
+
+            bound = 1 / math.sqrt(weight_per_out)
+            self.weights = torch.nn.Parameter(torch.empty(out_depth * out_height * out_width, 
+                                                          weight_per_out, device='cuda').uniform_(-bound, bound))
+        else:
+            d_i_pos = torch.arange(in_depth, device='cuda') / in_depth
+            h_i_pos = torch.arange(in_height, device='cuda') / in_height
+            w_i_pos = torch.arange(in_width, device='cuda') / in_width
+            d_o_pos = torch.arange(out_depth, device='cuda') / out_depth
+            h_o_pos = torch.arange(out_height, device='cuda') / out_height
+            w_o_pos = torch.arange(out_width, device='cuda') / out_width
+
+            d_pos_diff = torch.abs(d_o_pos.unsqueeze(1) - d_i_pos.unsqueeze(0))
+            h_pos_diff = torch.abs(h_o_pos.unsqueeze(1) - h_i_pos.unsqueeze(0))
+            w_pos_diff = torch.abs(w_o_pos.unsqueeze(1) - w_i_pos.unsqueeze(0))
+
+            pos_diff = torch.sqrt(
+                d_pos_diff.unsqueeze(2).unsqueeze(3).unsqueeze(4).unsqueeze(5) ** 2 +
+                h_pos_diff.unsqueeze(0).unsqueeze(1).unsqueeze(4).unsqueeze(5) ** 2 +
+                w_pos_diff.unsqueeze(0).unsqueeze(1).unsqueeze(2).unsqueeze(3) ** 2
+            )
+            pos_prob = torch.exp(-pos_diff / position_influence)
+
+            pos_prob_3d = pos_prob.view(out_depth * out_height * out_width, -1)
+            connections_3d = torch.multinomial(pos_prob_3d, weight_per_out, replacement=True)
+            self.connections = connections_3d.to(torch.int32)
+
+            bound = 1 / math.sqrt(weight_per_out)
+            self.weights = torch.nn.Parameter(torch.empty(out_depth * out_height * out_width, 
+                                                          weight_per_out, device='cuda').uniform_(-bound, bound))
+
+    def forward(self, input: torch.Tensor):
+        assert input.dim() == 4 and input.size(1) == self.in_depth and input.size(2) == self.in_height and input.size(3) == self.in_width, \
+            f"Input shape must be (batch_size, {self.in_depth}, {self.in_height}, {self.in_width}), but got {input.shape}"
+        assert input.is_cuda, "Input must be a CUDA tensor"
+        
+        output = PositionalSparseLinear3dFunction.apply(input, self.connections, self.weights)
+        return output.view(input.size(0), self.out_depth, self.out_height, self.out_width)
