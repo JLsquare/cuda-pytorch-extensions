@@ -1,11 +1,6 @@
-import os
 import torch
 import math
 from torch.utils.cpp_extension import load
-
-# gcc version between 7 and 12.2 is required, 10 is good (14 on arch on default so we need to set it)
-os.environ['CC'] = 'gcc-10'
-os.environ['CXX'] = 'g++-10'
 
 positional_sparse_linear = load(name='positional_sparse_linear_csrc', sources=[
     'positional_sparse_linear/csrc/positional_sparse_linear.cpp',
@@ -14,26 +9,26 @@ positional_sparse_linear = load(name='positional_sparse_linear_csrc', sources=[
 
 class PositionalSparseLinearFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor):
+    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the positional sparse linear function
 
-        params: input: torch.Tensor: input tensor
-        params: connections: torch.Tensor: connections tensor
-        params: weights: torch.Tensor: weights tensor
-        return: torch.Tensor: output tensor
+        params: input: torch.Tensor: input tensor , shape: (batch_size, in_features)
+        params: connections: torch.Tensor: connections tensor, shape: (out_features, weight_per_out)
+        params: weights: torch.Tensor: weights tensor, shape: (out_features, weight_per_out)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_features)
         """
         output = positional_sparse_linear.positional_sparse_linear_forward(input, connections, weights)
         ctx.save_for_backward(input, connections, weights)
         return output
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
         Backward pass of the positional sparse linear function
 
-        params: grad_output: torch.Tensor: gradient of the output tensor
-        return: torch.Tensor: gradient of the input tensor
+        params: grad_output: torch.Tensor: gradient of the output tensor, shape: (batch_size, out_features)
+        return: torch.Tensor: gradient of the input tensor, shape: (batch_size, in_features)
         """
         input, connections, weights = ctx.saved_tensors
         grad_input, grad_weight = positional_sparse_linear.positional_sparse_linear_backward(
@@ -83,12 +78,12 @@ class PositionalSparseLinear(torch.nn.Module):
             bound = 1 / math.sqrt(weight_per_out)
             self.weights = torch.nn.Parameter(torch.empty(out_features, weight_per_out, device='cuda').uniform_(-bound, bound))
 
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the PositionalSparseLinear module
 
-        params: input: torch.Tensor: input tensor
-        return: torch.Tensor: output tensor
+        params: input: torch.Tensor: input tensor, shape: (batch_size, in_features)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_features)
         """
         assert input.dim() == 2 and input.size(1) == self.in_features, \
             f"Input shape must be (batch_size, {self.in_features}), but got {input.shape}"
@@ -98,14 +93,14 @@ class PositionalSparseLinear(torch.nn.Module):
 
 class PositionalSparseLinear2dFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor):
+    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the positional sparse linear 2D function
 
-        params: input: torch.Tensor: input tensor
-        params: connections: torch.Tensor: connections tensor
-        params: weights: torch.Tensor: weights tensor
-        return: torch.Tensor: output tensor
+        params: input: torch.Tensor: input tensor, shape: (batch_size, in_height, in_width)
+        params: connections: torch.Tensor: connections tensor, shape: (out_height * out_width, weight_per_out)
+        params: weights: torch.Tensor: weights tensor, shape: (out_height * out_width, weight_per_out)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_height, out_width)
         """
         input_flat = input.view(input.size(0), -1)
         output = positional_sparse_linear.positional_sparse_linear_forward(input_flat, connections, weights)
@@ -113,12 +108,12 @@ class PositionalSparseLinear2dFunction(torch.autograd.Function):
         return output.view(input.size(0), -1)
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """
         Backward pass of the positional sparse linear 2D function
 
-        params: grad_output: torch.Tensor: gradient of the output tensor
-        return: torch.Tensor: gradient of the input tensor
+        params: grad_output: torch.Tensor: gradient of the output tensor, shape: (batch_size, out_height, out_width)
+        return: torch.Tensor: gradient of the input tensor, shape: (batch_size, in_height, in_width)
         """
         input, connections, weights = ctx.saved_tensors
         input_flat = input.view(input.size(0), -1)
@@ -182,12 +177,12 @@ class PositionalSparseLinear2d(torch.nn.Module):
             bound = 1 / math.sqrt(weight_per_out)
             self.weights = torch.nn.Parameter(torch.empty(out_height * out_width, weight_per_out, device='cuda').uniform_(-bound, bound))
 
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the PositionalSparseLinear2d module
 
-        params: input: torch.Tensor: input tensor
-        return: torch.Tensor: output tensor
+        params: input: torch.Tensor: input tensor, shape: (batch_size, in_height, in_width)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_height, out_width)
         """
         assert input.dim() == 3 and input.size(1) == self.in_height and input.size(2) == self.in_width, \
             f"Input shape must be (batch_size, {self.in_height}, {self.in_width}), but got {input.shape}"
@@ -198,14 +193,28 @@ class PositionalSparseLinear2d(torch.nn.Module):
     
 class PositionalSparseLinear3dFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor):
+    def forward(ctx, input: torch.Tensor, connections: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the positional sparse linear 3D function
+
+        params: input: torch.Tensor: input tensor, shape: (batch_size, in_depth, in_height, in_width)
+        params: connections: torch.Tensor: connections tensor, shape: (out_depth * out_height * out_width, weight_per_out)
+        params: weights: torch.Tensor: weights tensor, shape: (out_depth * out_height * out_width, weight_per_out)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_depth, out_height, out_width)
+        """
         input_flat = input.view(input.size(0), -1)
         output = positional_sparse_linear.positional_sparse_linear_forward(input_flat, connections, weights)
         ctx.save_for_backward(input, connections, weights)
         return output.view(input.size(0), -1)
 
     @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
+    def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        Backward pass of the positional sparse linear 3D function
+
+        params: grad_output: torch.Tensor: gradient of the output tensor, shape: (batch_size, out_depth, out_height, out_width)
+        return: torch.Tensor: gradient of the input tensor, shape: (batch_size, in_depth, in_height, in_width)
+        """
         input, connections, weights = ctx.saved_tensors
         input_flat = input.view(input.size(0), -1)
         grad_output_flat = grad_output.view(grad_output.size(0), -1)
@@ -219,6 +228,19 @@ class PositionalSparseLinear3d(torch.nn.Module):
                  out_depth: int, out_height: int, out_width: int, 
                  weight_per_out: int = 5, position_influence: float = 0.1, 
                  no_position_influence: bool = False):
+        """
+        Initialize the PositionalSparseLinear3d module
+
+        params: in_depth: int: number of input depth
+        params: in_height: int: number of input height
+        params: in_width: int: number of input width
+        params: out_depth: int: number of output depth
+        params: out_height: int: number of output height
+        params: out_width: int: number of output width
+        params: weight_per_out: int: number of weights per output
+        params: position_influence: float: influence of the position
+        params: no_position_influence: bool: whether to use position influence
+        """
         super(PositionalSparseLinear3d, self).__init__()
         self.in_depth = in_depth
         self.in_height = in_height
@@ -266,7 +288,13 @@ class PositionalSparseLinear3d(torch.nn.Module):
             self.weights = torch.nn.Parameter(torch.empty(out_depth * out_height * out_width, 
                                                           weight_per_out, device='cuda').uniform_(-bound, bound))
 
-    def forward(self, input: torch.Tensor):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the PositionalSparseLinear3d module
+
+        params: input: torch.Tensor: input tensor, shape: (batch_size, in_depth, in_height, in_width)
+        return: torch.Tensor: output tensor, shape: (batch_size, out_depth, out_height, out_width)
+        """
         assert input.dim() == 4 and input.size(1) == self.in_depth and input.size(2) == self.in_height and input.size(3) == self.in_width, \
             f"Input shape must be (batch_size, {self.in_depth}, {self.in_height}, {self.in_width}), but got {input.shape}"
         assert input.is_cuda, "Input must be a CUDA tensor"
